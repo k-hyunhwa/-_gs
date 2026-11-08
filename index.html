@@ -875,6 +875,7 @@
       renderDisks();
       renderStageButtons();
       startTimer();
+      startRankingTracker(currentStage);
     }
 
     function startTimer() {
@@ -1043,6 +1044,7 @@
         clearInterval(timerInterval);
 
         markStageAsCleared(currentStage);
+        submitScoreToSheet(currentStage, moveCount, timeRemaining);
         playVictoryFanfare();
 
         try {
@@ -1434,6 +1436,96 @@
       lucide.createIcons();
       initGame();
     };
+    /* ========================================================
+   구글 스프레드시트 랭킹 연동
+======================================================== */
+const GOOGLE_APP_URL = "https://script.google.com/macros/s/AKfycbyQx110daWPqOEBfkwh31diRBQ4hSX1OIPwCzww6FMTqSgSWZf3QQC32wcShUuK0MSF-w/exec
+";
+let rankRefreshInterval = null;
+
+// 1. 점수 구글 시트로 전송 (CORS 차단 방지를 위해 text/plain 방식 전송)
+function submitScoreToSheet(stage, moves, timeLeft) {
+  if (!currentStudent || !GOOGLE_APP_URL.startsWith("http")) return;
+
+  const payload = {
+    stage: stage,
+    studentId: currentStudent.id,
+    name: currentStudent.name,
+    moves: moves,
+    timeLeft: timeLeft
+  };
+
+  fetch(GOOGLE_APP_URL, {
+    method: "POST",
+    mode: "no-cors",
+    headers: { "Content-Type": "text/plain" },
+    body: JSON.stringify(payload)
+  }).then(() => {
+    // 전송 후 즉시 랭킹 갱신 요청
+    setTimeout(() => fetchRanking(stage), 1000);
+  }).catch(e => console.error(e));
+}
+
+// 2. 현재 단계 랭킹 가져오기
+function fetchRanking(stage) {
+  if (!GOOGLE_APP_URL.startsWith("http")) return;
+  
+  const titleEl = document.getElementById('rankStageTitle');
+  if (titleEl) titleEl.innerText = `${stage}단 순위`;
+
+  fetch(`${GOOGLE_APP_URL}?stage=${stage}`)
+    .then(res => res.json())
+    .then(records => {
+      const listEl = document.getElementById('rankList');
+      if (!listEl) return;
+      listEl.innerHTML = '';
+
+      if (records.length === 0) {
+        listEl.innerHTML = '<li class="text-slate-500 text-center py-2 text-[11px]">아직 성공한 학생이 없습니다.</li>';
+        return;
+      }
+
+      records.forEach((rec, idx) => {
+        const li = document.createElement('li');
+        li.className = 'flex items-center justify-between bg-slate-800/60 px-2 py-1.5 rounded-lg border border-slate-700/50 text-[11px]';
+        
+        const medal = idx === 0 ? '🥇' : idx === 1 ? '🥈' : idx === 2 ? '🥉' : `${idx + 1}위`;
+        li.innerHTML = `
+          <span class="font-bold truncate max-w-[110px] ${idx < 3 ? 'text-amber-300' : 'text-slate-300'}">
+            ${medal} ${rec.studentId} ${rec.name}
+          </span>
+          <span class="text-indigo-300 font-mono font-bold whitespace-nowrap">
+            ${rec.moves}회 <span class="text-[9px] text-slate-400">(${rec.timeLeft}s)</span>
+          </span>
+        `;
+        listEl.appendChild(li);
+      });
+    })
+    .catch(() => {});
+}
+
+// 3. 주기적 순위 갱신 타이머 시작
+function startRankingTracker(stage) {
+  if (rankRefreshInterval) clearInterval(rankRefreshInterval);
+  fetchRanking(stage);
+  // 수업 중 트래픽 과부하 방지를 위해 10초 주기로 순위 갱신
+  rankRefreshInterval = setInterval(() => {
+    fetchRanking(currentStage);
+  }, 10000);
+}
   </script>
+  <!-- 우측 실시간 순위표 UI -->
+<div id="rankingPanel" class="fixed top-4 right-4 z-40 w-52 sm:w-60 bg-slate-900/90 border border-indigo-500/40 rounded-2xl p-3 shadow-2xl backdrop-blur-md hidden sm:block">
+  <div class="flex items-center justify-between pb-2 mb-2 border-b border-slate-800">
+    <div class="flex items-center gap-1.5 text-xs font-bold text-amber-300">
+      <i data-lucide="trophy" class="w-4 h-4"></i>
+      <span id="rankStageTitle">3단 순위</span>
+    </div>
+    <span class="text-[10px] text-emerald-400">● 10초 갱신</span>
+  </div>
+  <ol id="rankList" class="space-y-1.5 text-xs text-slate-300 max-h-56 overflow-y-auto pr-1">
+    <li class="text-slate-500 text-center py-2 text-[11px]">기록 불러오는 중...</li>
+  </ol>
+</div>
 </body>
 </html>
